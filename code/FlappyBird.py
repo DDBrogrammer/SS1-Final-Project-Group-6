@@ -48,15 +48,12 @@ DATABASE_NAME = "flappy_bird"
 
 
 # Function to manage with data base
-def getPlayerListSql():
-    m = c.connect(host=HOST, user=USER, password=PASSWORD, database=DATABASE_NAME)
-    cur = m.cursor(named_tuple=True)
-    cur.execute("select * from player")
-    listRecord = []
-    for i in cur:
-        player = Player(i.id, i.name, i.password, i.email, i.rank)
-        listRecord.append(player)
-    return listRecord
+class Record():
+    def __init__(self, id, score, play_date, player_id):
+        self.id = id
+        self.score = score
+        self.play_date = play_date
+        self.player_id = player_id
 
 
 class Player():
@@ -68,35 +65,57 @@ class Player():
         self.rank = rank
 
 
+def getPlayerListSql():
+    m = c.connect(host=HOST, user=USER, password=PASSWORD, database=DATABASE_NAME)
+    cur = m.cursor(named_tuple=True)
+    cur.execute("select * from player")
+    listRecord = []
+    for i in cur:
+        player = Player(i.id, i.name, i.password, i.email, i.rank)
+        listRecord.append(player)
+    return listRecord
+
+
 def getPlayerByEmail(email):
     m = c.connect(host=HOST, user=USER, password=PASSWORD, database=DATABASE_NAME)
     cur = m.cursor(named_tuple=True)
-    query="select * from player where email="+ str(email)
+    query = "select * from player where email= " + "\"" + str(email) + "\""
     cur.execute(query)
-    player = Player()
     for i in cur:
         player = Player(i.id, i.name, i.password, i.email, i.rank)
     return player
 
 
+def getPlayerById(id):
+    global p
+    m = c.connect(host=HOST, user=USER, password=PASSWORD, database=DATABASE_NAME)
+    cur = m.cursor(named_tuple=True)
+    query = "select * from player where id= " + str(id)
+    cur.execute(query)
+    for i in cur:
+        p = Player(i.id, i.name, i.password, i.email, i.rank)
+    return p
+
+
 def getRecordByPlayerId(id):
     m = c.connect(host=HOST, user=USER, password=PASSWORD, database=DATABASE_NAME)
     cur = m.cursor(named_tuple=True)
-    query = "select * from score_record where player_id=" + str(id)
+    query = "select * from score_record where player_id=" + str(id) + " ORDER BY score DESC"
     cur.execute(query)
     listRecord = []
     for i in cur:
         record = Record(i.id, i.score, i.play_date, i.player_id)
+        print(i.id)
         listRecord.append(record)
     return listRecord
 
 
-class Record():
-    def __init__(self, id, score, play_date, player_id):
-        self.id = id
-        self.score = score
-        self.play_date = play_date
-        self.player_id = player_id
+def getBestRecordByPlayerId(id):
+    record_list = getRecordByPlayerId(id)
+    return record_list[0]
+
+
+print(getBestRecordByPlayerId(1).score)
 
 
 def savePlayer(email, password, name):
@@ -116,9 +135,52 @@ def savePlayerRecord(playerId, score):
     m.commit()
 
 
+# def getPlayerRankList():
+#     player_list = getPlayerListSql()
+#     rank_list = []
+#     for p in player_list:
+#         print("player rank list id: " + str(p.id))
+#         record = Record(getBestRecordByPlayerId(p.id).id,
+#                         getBestRecordByPlayerId(p.id).play_date,
+#                         getBestRecordByPlayerId(p.id).play_date,
+#                         getBestRecordByPlayerId(p.id).player_id
+#                         )
+#         rank_list.append(record)
+#     rank_list.sort(key=lambda x: x.score)
+#     return rank_list
+# query = "SELECT MAX(score), player_id FROM score_record GROUP BY player_id ORDER BY score DESC"
+
+def getRecordRankList():
+    m = c.connect(host=HOST, user=USER, password=PASSWORD, database=DATABASE_NAME)
+    cur = m.cursor(named_tuple=True)
+    query = "SELECT * FROM `score_record` WHERE id IN( SELECT min(id) FROM score_record GROUP BY player_id ORDER BY score DESC ) ORDER BY score DESC"
+    cur.execute(query)
+    listRecord = []
+    for i in cur:
+        record = Record(i.id, i.score, i.play_date, i.player_id)
+        print(i.id)
+        listRecord.append(record)
+    return listRecord
+
+
+getRecordRankList()
+
+
 def encryptPassword(password):
     hashpass = hashlib.md5(password.encode('utf8')).hexdigest()
     return hashpass
+
+
+def validateEmailAndPassword(email, password):
+    check_match = False
+    player = getPlayerByEmail(email)
+    if str(player.password) == encryptPassword(password):
+        check_match = True
+    return check_match
+
+
+print(validateEmailAndPassword("testlogin@gmail.com", "dai24032001"))
+print(encryptPassword("dai24032001"))
 
 
 # Validate method
@@ -217,6 +279,20 @@ class Columns():
 class Scenes():
     def __init__(self, option=1):
         self.option = option  # Base on the input to draw new screen (1: gameStart, 2: gamePlay, 3: gameOver, 4: gameHighScore)
+        self.player = Player(0, "", "", "", 0)
+        self.player_name_list = []
+        self.player_score_list = []
+        self.player_date_list = []
+
+    def updateRankList(self):
+        player_rank_list = getRecordRankList()
+        self.player_name_list.clear()
+        self.player_score_list.clear()
+        self.player_date_list.clear()
+        for record in player_rank_list:
+            self.player_name_list.append(str(getPlayerById(record.player_id).name))
+            self.player_score_list.append(str(getBestRecordByPlayerId(record.player_id).score))
+            self.player_date_list.append(str(getBestRecordByPlayerId(record.player_id).play_date))
 
     def gameMenu(self):
         menu_heading = MenuHeading("ACCOUNT")
@@ -304,9 +380,27 @@ class Scenes():
                             name += event.unicode
                             input_name.text = name
                 if event.type == KEYUP:
-                    if event.key == pygame.K_RETURN and validateEmail(input_email.text):
-                        savePlayer(str(input_email.text), str(input_password.text), str(input_name.text))
-                        check_enter = True
+                    if event.key == pygame.K_RETURN:
+
+                        if active_input == 1:
+                            if validateEmail(input_email.text):
+                                savePlayer(str(input_email.text[:-1]), str(input_password.text), str(input_name.text))
+                                savePlayerRecord(str(getPlayerByEmail(input_email.text[:-1]).id), 0)
+                                self.player.email = str(input_email.text)
+                                check_enter = True
+                        elif active_input == 2:
+                            if validateEmail(input_email.text):
+                                savePlayer(str(input_email.text), str(input_password.text[:-1]), str(input_name.text))
+                                savePlayerRecord(str(getPlayerByEmail(input_email.text).id), 0)
+                                self.player.email = str(input_email.text)
+                                check_enter = True
+                        elif active_input == 0:
+                            if validateEmail(input_email.text):
+                                savePlayer(str(input_email.text), str(input_password.text),
+                                           str(input_name.text[:-1]))
+                                savePlayerRecord(str(getPlayerByEmail(input_email.text).id), 0)
+                                self.player.email = str(input_email.text)
+                                check_enter = True
             if check_enter:
                 break
             register_heading.draw()
@@ -323,7 +417,72 @@ class Scenes():
             FPSCLOCK.tick(FPS)
         self.option = 4
 
+    def gameLogin(self):
+        login_heading = MenuHeading("LOGIN")
+        form_gmail = Gmail("Gmail: ")
+        form_password = Password("Password: ")
+        email = ""
+        input_email = InputGmail(email)
+        password = ""
+        input_password = InputPassword(password)
+        active_input = 1
+        check_enter = False
+        while True:
+            # Draw new background
+            DISPLAYSURF.blit(IMG_BG, (0, 0))
+            for event in pygame.event.get():
+                if event.type == QUIT or (event.type == KEYUP and event.key == K_ESCAPE):
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    # Navigate mouse
+                    if event.key == pygame.K_DOWN:
+                        active_input = int((active_input + 1) % 2)
+                    elif event.key == pygame.K_UP:
+                        active_input = int((active_input - 1) % 2)
+                    # Check for backspace
+                    if active_input == 1:
+                        if event.key == pygame.K_BACKSPACE:
+                            email = email[:-1]
+                            input_email.text = email
+                        else:
+                            email += event.unicode
+                            input_email.text = email
+                    elif active_input == 0:
+                        if event.key == pygame.K_BACKSPACE:
+                            password = password[:-1]
+                            input_password.text = password
+                        else:
+                            password += event.unicode
+                            input_password.text = password
+                if event.type == pygame.KEYUP:
+                    if event.key == pygame.K_RETURN:
+                        print(email + "__")
+                        print(password + "__")
+                        print(validateEmailAndPassword(email, str(password)))
+                        if active_input == 1:
+                            if validateEmailAndPassword(email[:-1], password):
+                                self.player.email = str(input_email.text)
+                                check_enter = True
+                        elif active_input == 0:
+                            if validateEmailAndPassword(email, password[:-1]):
+                                self.player.email = str(input_email.text)
+                                check_enter = True
+            if check_enter:
+                break
+            login_heading.draw()
+            form_gmail.draw()
+            form_password.draw()
+            input_email.drawBox()
+            input_email.drawText()
+            input_password.drawBox()
+            input_password.drawText()
+            pygame.display.update()
+            FPSCLOCK.tick(FPS)
+        self.option = 4
+
     def gameStart(self, bird):
+        player = getPlayerByEmail(self.player.email)
         bird.y = WINDOWHEIGHT / 2 - SIZE_BIRD[1] / 2
         bird.speed = 0
         clickToStart = ClickToST('Click to start')
@@ -387,6 +546,7 @@ class Scenes():
         self.option = 6
 
     def gameOver(self, bird, columns, score):
+        player = getPlayerByEmail(self.player.email)
         bird.speed = 0
         headingGameOver = Heading('GAMEOVER')
         birdStatus = bird.status
@@ -398,7 +558,6 @@ class Scenes():
                 if event.type == QUIT or (event.type == KEYUP and event.key == K_ESCAPE):
                     pygame.quit()
                     sys.exit()
-
             columns.draw()
             bird.draw()
             bird.update(False)
@@ -418,7 +577,6 @@ class Scenes():
             pygame.display.update()
             FPSCLOCK.tick(FPS)
         clickToContinue = ClickToST('ClickToContinue')
-
         while True:
             scoreText = Text('Score: ' + score.text, WINDOWWIDTH / 2 - len('Score: ' + score.text) / 2,
                              WINDOWHEIGHT / 2, 50, BLACK)
@@ -429,6 +587,8 @@ class Scenes():
                     pygame.quit()
                     sys.exit()
                 if event.type == pygame.MOUSEBUTTONDOWN:
+                    savePlayerRecord(player.id, score.text)
+                    self.updateRankList()
                     mouseClick = True
             if mouseClick == True:
                 break
@@ -438,59 +598,83 @@ class Scenes():
             clickToContinue.draw()
             clickToContinue.update()
             scoreText.draw()
-
             pygame.display.update()
             FPSCLOCK.tick(FPS)
         self.option = 7
 
-    # def gameRanking(self, bird, columns):
-    #     bird.speed = 0
-    #     clickToReplay = ClickToST('Click to replay')
-    #     headingRankTable = TableHeading('Bird Ranking')
-    #     tableRankingColumnHeader = TableRankingColumn('Rank')
-    #     tableNameColumnHeader = TableNameColumn('Bird Name')
-    #     tableScoreColumnHeader = TableScoreColumn('Score')
-    #     tableDateColumnHeader = TableDateColumn("Date")
-    #     while True:
-    #         DISPLAYSURF.blit(IMG_BG, (0, 0))
-    #         mouseClick = False
-    #         for event in pygame.event.get():
-    #             if event.type == QUIT or (event.type == KEYUP and event.key == K_ESCAPE):
-    #                 pygame.quit()
-    #                 sys.exit()
-    #             if event.type == MOUSEBUTTONUP:
-    #                 mouseClick = True
-    #         if mouseClick == True:
-    #             break
-    #         columns.draw()
-    #         bird.draw()
-    #         headingRankTable.draw()
-    #         tableRankingColumnHeader.draw()
-    #         tableNameColumnHeader.draw()
-    #         tableScoreColumnHeader.draw()
-    #         tableDateColumnHeader.draw()
-    #         i = 0
-    #         for record in getPlayerListSql():
-    #             i = i + 1
-    #             tableRanking = TableRankingColumn('#' + str(i))
-    #             tableRanking.updatePosion(i)
-    #             tableRanking.draw()
-    #             tableName = TableNameColumn(str(record.name))
-    #             tableName.updatePosion(i)
-    #             tableName.draw()
-    #             tableScore = TableScoreColumn(str(record.score))
-    #             tableScore.updatePosion(i)
-    #             tableScore.draw()
-    #             tableDate = TableDateColumn(str(record.date))
-    #             tableDate.updatePosion(i)
-    #             tableDate.draw()
-    #             if i >= 10:
-    #                 break
-    #         clickToReplay.draw()
-    #         clickToReplay.update()
-    #         pygame.display.update()
-    #         FPSCLOCK.tick(FPS)
-    #     self.option = 1
+    def gameRanking(self, bird, columns):
+        player = getPlayerByEmail(self.player.email)
+        bird.speed = 0
+        birdStatus = bird.status
+        isBirdAminationFinish = False  # Check bird fall
+        inHeadingAminationFinish = False  # Check heading fall
+        while True:
+            DISPLAYSURF.blit(IMG_BG, (0, 0))
+            for event in pygame.event.get():
+                if event.type == QUIT or (event.type == KEYUP and event.key == K_ESCAPE):
+                    pygame.quit()
+                    sys.exit()
+            columns.draw()
+            bird.draw()
+            bird.update(False)
+            bird.status = birdStatus
+            if bird.y >= WINDOWHEIGHT - SIZE_BIRD[1]:
+                bird.y = WINDOWHEIGHT - SIZE_BIRD[1]
+                bird.speed = 0
+                isBirdAminationFinish = True
+                inHeadingAminationFinish = True
+            if isBirdAminationFinish == True and inHeadingAminationFinish == True:
+                break
+            pygame.display.update()
+            FPSCLOCK.tick(FPS)
+        clickToContinue = ClickToST('ClickToContinue')
+        headingRankTable = TableHeading('Bird Ranking')
+        tableRankingColumnHeader = TableRankingColumn('Rank')
+        tableNameColumnHeader = TableNameColumn('Bird Name')
+        tableScoreColumnHeader = TableScoreColumn('Score')
+        tableDateColumnHeader = TableDateColumn("Date")
+        player_rank_list = getRecordRankList()
+        while True:
+            DISPLAYSURF.blit(IMG_BG, (0, 0))
+            columns.draw()
+            bird.draw()
+            bird.update(False)
+            mouseClick = False
+            for event in pygame.event.get():
+                if event.type == QUIT or (event.type == KEYUP and event.key == K_ESCAPE):
+                    pygame.quit()
+                    sys.exit()
+                if event.type == MOUSEBUTTONUP:
+                    print("mouse clicked")
+                    mouseClick = True
+            if mouseClick == True:
+                break
+            headingRankTable.draw()
+            tableRankingColumnHeader.draw()
+            tableNameColumnHeader.draw()
+            tableScoreColumnHeader.draw()
+            tableDateColumnHeader.draw()
+            clickToContinue.draw()
+            i = 0
+            for record in self.player_name_list:
+                i = i + 1
+                tableRanking = TableRankingColumn('#' + str(i))
+                tableRanking.updatePosion(i)
+                tableRanking.draw()
+                tableName = TableNameColumn(self.player_name_list[i - 1])
+                tableName.updatePosion(i)
+                tableName.draw()
+                tableScore = TableScoreColumn(self.player_score_list[i - 1])
+                tableScore.updatePosion(i)
+                tableScore.draw()
+                tableDate = TableDateColumn(self.player_date_list[i - 1])
+                tableDate.updatePosion(i)
+                tableDate.draw()
+                if i >= 10:
+                    break
+            pygame.display.update()
+            FPSCLOCK.tick(FPS)
+        self.option = 4
 
 
 # TEXT MODELS
@@ -736,6 +920,8 @@ def main():
             scene.gameMenu()
         if scene.option == 2:
             scene.gameRegister()
+        if scene.option == 3:
+            scene.gameLogin()
         elif scene.option == 4:
             scene.gameStart(bird)
         elif scene.option == 5:
@@ -743,7 +929,8 @@ def main():
         elif scene.option == 6:
             scene.gameOver(bird, columns, score)
         elif scene.option == 7:
-            scene.gameRanking(bird, columns, score)
+            print("runrank")
+            scene.gameRanking(bird, columns)
 
 
 if __name__ == '__main__':
